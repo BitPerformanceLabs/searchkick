@@ -36,7 +36,7 @@ module Searchkick
   class ImportError < Error; end
 
   class << self
-    attr_accessor :search_method_name, :wordnet_path, :timeout, :models, :client_options, :redis, :index_suffix
+    attr_accessor :search_method_name, :wordnet_path, :timeout, :models, :client_options, :redis, :index_suffix, :db_sorting_function
     attr_writer :client, :env, :search_timeout
     attr_reader :aws_credentials
   end
@@ -45,6 +45,7 @@ module Searchkick
   self.timeout = 10
   self.models = []
   self.client_options = {}
+  self.db_sorting_function = nil
 
   def self.client
     @client ||= begin
@@ -172,7 +173,16 @@ module Searchkick
     records =
       if records.respond_to?(:primary_key)
         # ActiveRecord
-        records.where(records.primary_key => ids) if records.primary_key
+        if Searchkick.db_sorting_function
+          # Since PostgreSQL doesn't return records in the same order as the
+          # ElasticSearch query, we use a database function to do so.
+          # See the link for a more in-depth description
+          # https://www.chrissearle.org/2014/05/02/postgresql-sort-where-id-in-by-original-id-list-order/
+          records.where(records.primary_key => ids)
+                 .reorder("#{Searchkick.db_sorting_function}(#{records.table_name}.#{records.primary_key}, #{postgres_array(ids)})")
+        else
+          records.where(records.primary_key => ids) if records.primary_key
+        end
       elsif records.respond_to?(:queryable)
         # Mongoid 3+
         records.queryable.for_ids(ids)
@@ -201,6 +211,17 @@ module Searchkick
   # private
   def self.callbacks_value=(value)
     Thread.current[:searchkick_callbacks_enabled] = value
+  end
+
+  def self.postgres_sql_escape(str)
+    str.gsub(/[%_'\\"]/, "\\\\\\0")
+  end
+
+  def self.postgres_array(arry)
+    "'{" + arry.inject([]) do |mem, val|
+      mem << (val.is_a?(String) ? "\"#{postgres_sql_escape(val)}\"" : val)
+      mem
+    end.join(", ") + "}'"
   end
 end
 
