@@ -169,8 +169,10 @@ module Searchkick
 
   # private
   def self.load_records(records, ids)
+    is_activerecord = records.respond_to?(:primary_key)
+
     records =
-      if records.respond_to?(:primary_key)
+      if is_activerecord
         # ActiveRecord
         records.where(records.primary_key => ids) if records.primary_key
       elsif records.respond_to?(:queryable)
@@ -182,6 +184,21 @@ module Searchkick
       elsif records.respond_to?(:key_column_names)
         records.where(records.key_column_names.first => ids)
       end
+
+    if is_activerecord
+      # Overriding to_a to ensure that ordering is preseverd base on the
+      # index of hits
+      records.instance_exec(ids) do |hits|
+        define_singleton_method :to_a do
+          if defined?(::ActiveRecord) && ::ActiveRecord::VERSION::MAJOR >= 4
+            self.load
+          else
+            self.__send__(:exec_queries)
+          end
+          records.sort_by { |record| hits.to_a.index { |id| id.to_s == record.id.to_s } }
+        end
+      end
+    end
 
     raise Searchkick::Error, "Not sure how to load records" if !records
 

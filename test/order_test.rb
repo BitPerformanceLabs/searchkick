@@ -11,6 +11,14 @@ class OrderTest < Minitest::Test
     assert_order "product", ["Product A", "Product B", "Product C", "Product D"], order: "name"
   end
 
+  def test_ensure_ordering_from_hits
+    store_names ["Product A", "Product B", "Product C", "Product D"]
+    result     = Product.search "Product B"
+    hit_ids    = result.hits.map { |hit| hit["_id"].to_i }
+    record_ids = result.records.to_a.map(&:id)
+    assert_equal hit_ids, record_ids
+  end
+
   def test_order_id
     skip if cequel?
 
